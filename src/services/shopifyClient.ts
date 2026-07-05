@@ -11,11 +11,20 @@ interface ProductSearchParams {
   query: string;
 }
 
+interface ProductVariantResult {
+  size: string;
+  price: string;
+  available: boolean;
+  stock: number;
+}
+
 interface ProductSearchResult {
   id: string;
   title: string;
   price: string;
   available: boolean;
+  sizes: string[];
+  variants: ProductVariantResult[];
 }
 
 interface ProductsGraphqlResponse {
@@ -26,7 +35,16 @@ interface ProductsGraphqlResponse {
           id: string;
           title: string;
           totalInventory: number | null;
-          variants: { edges: Array<{ node: { price: string } }> };
+          variants: {
+            edges: Array<{
+              node: {
+                title: string;
+                price: string;
+                inventoryQuantity: number | null;
+                selectedOptions: Array<{ name: string; value: string }>;
+              };
+            }>;
+          };
         };
       }>;
     };
@@ -47,6 +65,13 @@ async function adminGraphql(query: string, variables: Record<string, unknown>): 
   });
 }
 
+// La opción del producto que representa la talla (Talla, Size, etc.);
+// si no existe, se usa el título de la variante.
+function variantSize(variant: { title: string; selectedOptions: Array<{ name: string; value: string }> }): string {
+  const sizeOption = variant.selectedOptions.find((opt) => /talla|size/i.test(opt.name));
+  return sizeOption?.value ?? variant.title;
+}
+
 export async function searchProducts(params: ProductSearchParams): Promise<ProductSearchResult[]> {
   if (!isShopifyConfigured()) {
     logger.warn({ params }, "shopify_not_configured");
@@ -65,8 +90,15 @@ export async function searchProducts(params: ProductSearchParams): Promise<Produ
             id
             title
             totalInventory
-            variants(first: 1) {
-              edges { node { price } }
+            variants(first: 50) {
+              edges {
+                node {
+                  title
+                  price
+                  inventoryQuantity
+                  selectedOptions { name value }
+                }
+              }
             }
           }
         }
@@ -88,10 +120,21 @@ export async function searchProducts(params: ProductSearchParams): Promise<Produ
     return [];
   }
 
-  return body.data.products.edges.map(({ node }) => ({
-    id: node.id,
-    title: node.title,
-    price: node.variants.edges[0]?.node.price ?? "0.00",
-    available: (node.totalInventory ?? 0) > 0,
-  }));
+  return body.data.products.edges.map(({ node }) => {
+    const variants = node.variants.edges.map(({ node: variant }) => ({
+      size: variantSize(variant),
+      price: variant.price,
+      available: (variant.inventoryQuantity ?? 0) > 0,
+      stock: variant.inventoryQuantity ?? 0,
+    }));
+
+    return {
+      id: node.id,
+      title: node.title,
+      price: variants[0]?.price ?? "0.00",
+      available: (node.totalInventory ?? 0) > 0,
+      sizes: variants.filter((v) => v.available).map((v) => v.size),
+      variants,
+    };
+  });
 }
