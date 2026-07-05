@@ -12,7 +12,9 @@ interface ProductSearchParams {
 }
 
 interface ProductVariantResult {
+  name: string;
   size: string;
+  color: string | null;
   price: string;
   available: boolean;
   stock: number;
@@ -24,6 +26,7 @@ interface ProductSearchResult {
   price: string;
   available: boolean;
   sizes: string[];
+  colors: string[];
   variants: ProductVariantResult[];
 }
 
@@ -65,11 +68,16 @@ async function adminGraphql(query: string, variables: Record<string, unknown>): 
   });
 }
 
-// La opción del producto que representa la talla (Talla, Size, etc.);
-// si no existe, se usa el título de la variante.
-function variantSize(variant: { title: string; selectedOptions: Array<{ name: string; value: string }> }): string {
-  const sizeOption = variant.selectedOptions.find((opt) => /talla|size/i.test(opt.name));
-  return sizeOption?.value ?? variant.title;
+// Localiza una opción del producto por nombre (Talla/Size, Color, etc.).
+function findOption(
+  variant: { selectedOptions: Array<{ name: string; value: string }> },
+  pattern: RegExp
+): string | null {
+  return variant.selectedOptions.find((opt) => pattern.test(opt.name))?.value ?? null;
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values)];
 }
 
 export async function searchProducts(params: ProductSearchParams): Promise<ProductSearchResult[]> {
@@ -122,18 +130,23 @@ export async function searchProducts(params: ProductSearchParams): Promise<Produ
 
   return body.data.products.edges.map(({ node }) => {
     const variants = node.variants.edges.map(({ node: variant }) => ({
-      size: variantSize(variant),
+      name: variant.title,
+      size: findOption(variant, /talla|size/i) ?? variant.title,
+      color: findOption(variant, /color/i),
       price: variant.price,
       available: (variant.inventoryQuantity ?? 0) > 0,
       stock: variant.inventoryQuantity ?? 0,
     }));
+
+    const availableVariants = variants.filter((v) => v.available);
 
     return {
       id: node.id,
       title: node.title,
       price: variants[0]?.price ?? "0.00",
       available: (node.totalInventory ?? 0) > 0,
-      sizes: variants.filter((v) => v.available).map((v) => v.size),
+      sizes: unique(availableVariants.map((v) => v.size)),
+      colors: unique(availableVariants.map((v) => v.color).filter((c): c is string => c !== null)),
       variants,
     };
   });
