@@ -91,7 +91,9 @@ curl -X POST http://localhost:3000/api/kommo/webhook \
    - Health check path: `/health`
 3. Configura las variables de entorno en Render (no van en el repo):
    - `KOMMO_API_KEY`
-   - `SHOPIFY_STORE_DOMAIN`, `SHOPIFY_ADMIN_ACCESS_TOKEN` (cuando conectes Shopify)
+   - `SHOPIFY_STORE_DOMAIN`, `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`
+     (Client ID/Secret de la app creada en el Dev Dashboard de Shopify; el API
+     los intercambia por un access token automáticamente)
 4. Render te da una URL pública, ej. `https://kommo-shopify-api.onrender.com`.
    Esa es la URL que se configura en el paso "Webhook" del Salesbot en Kommo:
    - URL: `https://kommo-shopify-api.onrender.com/api/kommo/webhook`
