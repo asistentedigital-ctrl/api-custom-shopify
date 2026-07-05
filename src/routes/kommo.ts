@@ -1,22 +1,22 @@
 import { Router } from "express";
+import { config } from "../config";
 import { logger } from "../logger";
+import { buildProductMessage } from "../services/botMessages";
+import { getLeadCustomField, isKommoConfigured, setLeadCustomField } from "../services/kommoClient";
 import { searchProducts } from "../services/shopifyClient";
 import { kommoRequestSchema, type KommoResponse } from "../types/kommo";
 
 export const kommoRouter = Router();
 
 /**
- * Punto de entrada único para el Salesbot de Kommo (paso widget_request).
+ * Endpoint síncrono genérico (curl, integraciones que sí leen la respuesta).
  * El campo `action` decide qué acción de Shopify se ejecuta.
- * Agregar nuevas acciones aquí conforme se construya el API custom de Shopify.
  */
 kommoRouter.post("/webhook", async (req, res) => {
   const raw = req.body ?? {};
   logger.info({ body: raw }, "kommo_webhook_body");
 
-  // El widget_request de Kommo puede envolver el payload en un campo "data".
-  const unwrapped =
-    !raw.action && raw.data && typeof raw.data === "object" ? raw.data : raw;
+  const unwrapped = !raw.action && raw.data && typeof raw.data === "object" ? raw.data : raw;
 
   const parsed = kommoRequestSchema.safeParse(unwrapped);
 
@@ -35,24 +35,10 @@ kommoRouter.post("/webhook", async (req, res) => {
       const products = await searchProducts({ query });
       const first = products[0];
 
-      // Campos planos + mensaje listo para enviar, porque las variables del
-      // Salesbot ({{json.campo}}) no navegan arrays anidados.
-      let message: string;
-      if (!first) {
-        message = `No encontré productos que coincidan con "${query}".`;
-      } else if (!first.available) {
-        message = `${first.title} — $${first.price}. Agotado por el momento.`;
-      } else {
-        const parts = [`${first.title} — $${first.price}.`];
-        if (first.sizes.length) parts.push(`Tallas disponibles: ${first.sizes.join(", ")}.`);
-        if (first.colors.length) parts.push(`Colores: ${first.colors.join(", ")}.`);
-        message = parts.join(" ");
-      }
-
       res.status(200).json({
         ok: true,
         found: products.length > 0,
-        message,
+        message: buildProductMessage(products, query),
         product_title: first?.title ?? "",
         product_price: first?.price ?? "",
         product_sizes: first?.sizes.join(", ") ?? "",
@@ -68,3 +54,70 @@ kommoRouter.post("/webhook", async (req, res) => {
     }
   }
 });
+
+/**
+ * Endpoint para la acción "Enviar webhook" del Salesbot. Esa acción no lee la
+ * respuesta HTTP, así que el flujo es asíncrono:
+ *   1. Se responde 200 de inmediato (Kommo exige <2s).
+ *   2. Se lee la consulta del cliente desde el campo KOMMO_QUERY_FIELD_ID del lead.
+ *   3. Se busca en Shopify y se escribe el mensaje en KOMMO_RESPONSE_FIELD_ID.
+ *   4. El bot, tras una pausa, envía el contenido de ese campo al cliente.
+ */
+kommoRouter.post("/salesbot-hook", (req, res) => {
+  logger.info({ body: req.body }, "salesbot_hook_body");
+  res.status(200).json({ ok: true });
+
+  void processSalesbotHook(req.body).catch((err) => {
+    logger.error({ err }, "salesbot_hook_processing_failed");
+  });
+});
+
+// La acción "Enviar webhook" varía el formato según el disparador; se intenta
+// extraer el id del lead de las formas conocidas.
+function extractLeadId(body: unknown): number | null {
+  if (!body || typeof body !== "object") return null;
+  const b = body as Record<string, any>;
+
+  if (b.lead_id) return Number(b.lead_id);
+  if (b.entity_id) return Number(b.entity_id);
+
+  if (b.leads && typeof b.leads === "object") {
+    for (const group of Object.values(b.leads as Record<string, unknown>)) {
+      if (Array.isArray(group) && group[0]?.id) return Number(group[0].id);
+    }
+  }
+
+  return null;
+}
+
+async function processSalesbotHook(body: unknown): Promise<void> {
+  const leadId = extractLeadId(body);
+
+  if (!leadId) {
+    logger.warn({ body }, "salesbot_hook_no_lead_id");
+    return;
+  }
+
+  if (!isKommoConfigured() || !config.KOMMO_QUERY_FIELD_ID || !config.KOMMO_RESPONSE_FIELD_ID) {
+    logger.warn("kommo_api_not_configured");
+    return;
+  }
+
+  const query = await getLeadCustomField(leadId, config.KOMMO_QUERY_FIELD_ID);
+
+  if (!query) {
+    logger.warn({ leadId }, "salesbot_hook_empty_query");
+    await setLeadCustomField(
+      leadId,
+      config.KOMMO_RESPONSE_FIELD_ID,
+      "No recibí el nombre del producto. ¿Me lo repites?"
+    );
+    return;
+  }
+
+  const products = await searchProducts({ query });
+  const message = buildProductMessage(products, query);
+
+  const ok = await setLeadCustomField(leadId, config.KOMMO_RESPONSE_FIELD_ID, message);
+  logger.info({ leadId, query, found: products.length, ok }, "salesbot_hook_processed");
+}

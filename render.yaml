@@ -17,3 +17,11 @@ services:
         sync: false
       - key: SHOPIFY_API_VERSION
         value: "2026-07"
+      - key: KOMMO_SUBDOMAIN
+        sync: false
+      - key: KOMMO_ACCESS_TOKEN
+        sync: false
+      - key: KOMMO_QUERY_FIELD_ID
+        sync: false
+      - key: KOMMO_RESPONSE_FIELD_ID
+        sync: false

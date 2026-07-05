@@ -12,6 +12,8 @@ export function createApp() {
 
   app.use(cors());
   app.use(express.json());
+  // Los webhooks de Kommo pueden llegar como formulario en vez de JSON.
+  app.use(express.urlencoded({ extended: true }));
   app.use(pinoHttp({ logger }));
 
   app.use(healthRouter);

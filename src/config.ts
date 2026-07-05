@@ -4,6 +4,12 @@ import { z } from "zod";
 const envSchema = z.object({
   PORT: z.coerce.number().default(3000),
   KOMMO_API_KEY: z.string().min(1, "KOMMO_API_KEY es obligatorio"),
+  // Para escribir la respuesta de Shopify en un campo del lead (flujo
+  // "Enviar webhook" del Salesbot, que no puede leer respuestas HTTP).
+  KOMMO_SUBDOMAIN: z.string().optional(),
+  KOMMO_ACCESS_TOKEN: z.string().optional(),
+  KOMMO_QUERY_FIELD_ID: z.coerce.number().optional(),
+  KOMMO_RESPONSE_FIELD_ID: z.coerce.number().optional(),
   SHOPIFY_STORE_DOMAIN: z.string().optional(),
   SHOPIFY_CLIENT_ID: z.string().optional(),
   SHOPIFY_CLIENT_SECRET: z.string().optional(),
